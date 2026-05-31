@@ -1,0 +1,339 @@
+// Copyright (c) Shinya Ishikawa. All rights reserved.
+// Licensed under the MIT license. See LICENSE file in the project root for full
+// license information.
+
+#include "Avatar.h"
+
+#define AVATAR_LOOP_DELAY_MS 50
+#define AVATAR_BREATH_PERIOD_MULTIPLIER 100
+#define AVATAR_BREATH_PERIOD_MS (AVATAR_LOOP_DELAY_MS * AVATAR_BREATH_PERIOD_MULTIPLIER)
+
+namespace m5avatar {
+//const uint32_t DEFAULT_STACK_SIZE = 2048;
+
+unsigned int seed = 0;
+
+// TODO(meganetaaan): make read-only
+DriveContext::DriveContext(Avatar *avatar) : avatar{avatar} {}
+
+Avatar *DriveContext::getAvatar() { return avatar; }
+
+TaskHandle_t drawTaskHandle;
+
+// CoreS3: SD と LCD が GPIO35(MISO/DC)を共有するため、SD 連続アクセス中はこのフラグを
+// true にして描画を「ループ境界で」一時停止する。vTaskSuspend と違い描画トランザクション
+// 途中で止まらないので M5GFX バスを掴んだまま固まる(=メインループのデッドロック)を防ぐ。
+// g_avatar_sd_pause : 停止リクエスト(SdBus が立てる)
+// g_avatar_sd_paused: 停止確認ACK(描画ループが「draw() 中ではない」状態に入ったら true)。
+//   SdBus はこの ACK を待ってから GPIO35 を奪う。これで draw() 実行中に GPIO35 を
+//   横取りして画像が壊れる(色化け)事故を防ぐ。
+volatile bool g_avatar_sd_pause  = false;
+volatile bool g_avatar_sd_paused = false;
+// 別レンダラ(RoboEyes 等)が画面を占有する間、顔の描画だけ止める。
+// fadeoutProcess は止めない — change_mod() が pause() の前に avatar_fadeout() を待つため、
+// 描画を完全停止すると fadeout が永久に終わらずモード切替がハングする。
+volatile bool g_avatar_render_pause = false;
+
+void drawLoop(void *args) {
+  DriveContext *ctx = reinterpret_cast<DriveContext *>(args);
+  Avatar *avatar = ctx->getAvatar();
+  while (avatar->isDrawing()) {
+    if (g_avatar_sd_pause) {           // SD アクセス中は LCD を一切触らない
+      g_avatar_sd_paused = true;       // ACK: いま draw() 中ではない(ループ境界に居る)
+      vTaskDelay(2 / portTICK_PERIOD_MS);
+      continue;
+    }
+    if (g_avatar_render_pause) {       // 別レンダラが画面占有中: 顔描画はスキップ…
+      g_avatar_sd_paused = true;       // ACK(描画停止中)
+      avatar->fadeoutProcess();        // …が fadeout だけは進める(モード切替のハング防止)
+      vTaskDelay(AVATAR_LOOP_DELAY_MS);
+      continue;
+    }
+    g_avatar_sd_paused = false;
+    if (avatar->isDrawing()) {
+      avatar->draw();
+      avatar->fadeoutProcess();   //motoh
+    }
+    vTaskDelay(AVATAR_LOOP_DELAY_MS);
+  }
+  vTaskDelete(NULL);
+}
+
+void facialLoop(void *args) {
+  int c = 0;
+  DriveContext *ctx = reinterpret_cast<DriveContext *>(args);
+  Avatar *avatar = ctx->getAvatar();
+  uint32_t saccade_interval = 1000;
+  uint32_t blink_interval = 1000;
+  unsigned long last_saccade_millis = 0;
+  unsigned long last_blink_millis = 0;
+  bool eye_open = true;
+
+  for (;;) {
+    if ((millis() - last_saccade_millis) > saccade_interval) {
+      float vertical = rand_r(&seed) / (RAND_MAX / 2.0) - 1;
+      float horizontal = rand_r(&seed) / (RAND_MAX / 2.0) - 1;
+      avatar->setGaze(vertical, horizontal);
+      saccade_interval = 500 + 100 * random(20);
+      last_saccade_millis = millis();
+    }
+    if ((millis()- last_blink_millis) > blink_interval) {
+      if (eye_open) {
+        avatar->setEyeOpenRatio(1);
+        blink_interval = 2500 + 100 * random(20);
+      } else {
+        avatar->setEyeOpenRatio(0);
+        blink_interval = 300 + 10 * random(20);
+      }
+      eye_open = !eye_open;
+      last_blink_millis = millis();
+    }
+
+    // 呼吸周期を millis() 基準で計算（ループ速度に依存しない）
+    float f = sin((millis() % AVATAR_BREATH_PERIOD_MS) * 2.0 * PI /
+                  AVATAR_BREATH_PERIOD_MS);
+    avatar->setBreath(f);
+    vTaskDelay(AVATAR_LOOP_DELAY_MS);
+  }
+}
+
+Avatar::Avatar() : Avatar(new Face()) {}
+
+Avatar::Avatar(Face *face)
+    : face{face},
+      _isDrawing{false},
+      expression{Expression::Neutral},
+      breath{0},
+      eyeOpenRatio{1},
+      mouthOpenRatio{0},
+      gazeV{0},
+      gazeH{0},
+      rotation{0},
+      scale{1},
+      palette{ColorPalette()},
+      speechText{""},
+      colorDepth{1},
+      fadeoutDoneFlag{true},
+      fadeoutDirection{true},
+      fadeoutOffset{0},
+      batteryIconStatus{BatteryIconStatus::invisible}{}
+
+void Avatar::setFace(Face *face) { this->face = face; }
+
+Face *Avatar::getFace() const { return face; }
+
+void Avatar::addTask(TaskFunction_t f, const char* name, int stackSize, int priority) {
+  DriveContext *ctx = new DriveContext(this);
+  // TODO(meganetaaan): set a task handler
+  xTaskCreate(f, /* Function to implement the task */
+                          name, /* Name of the task */
+                          stackSize, /* Stack size in words */
+                          ctx,                /* Task input parameter */
+                          priority,                  /* Priority of the task */
+                          NULL);              /* Task handle. */
+  // xTaskCreatePinnedToCore(f, /* Function to implement the task */
+  //                         name, /* Name of the task */
+  //                         DEFAULT_STACK_SIZE, /* Stack size in words */
+  //                         ctx,                /* Task input parameter */
+  //                         1,                  /* P2014riority of the task */
+  //                         NULL,               /* Task handle. */
+  //                         1); /* Core where the task should run */
+}
+
+void Avatar::init(int colorDepth) {
+  // for compatibility with older version
+  start(colorDepth);
+}
+
+void Avatar::stop() { _isDrawing = false; }
+
+void Avatar::suspend() {
+  vTaskSuspend(drawTaskHandle);
+}
+
+void Avatar::resume() {
+  vTaskResume(drawTaskHandle);
+}
+
+void Avatar::start(int colorDepth) { 
+  // if the task already started, don't create another task;
+  if (_isDrawing) return;
+  _isDrawing = true;
+
+  this->colorDepth = colorDepth;
+  face->initSprites(colorDepth);
+  DriveContext *ctx = new DriveContext(this);
+  // TODO(meganetaaan): keep handle of these tasks
+  xTaskCreate(drawLoop,     /* Function to implement the task */
+                          "drawLoop",   /* Name of the task */
+//                          2048,         /* Stack size in words */
+                          4096,         /* スプライトでJPEGを表示するとCore 0 panic’edとなるためスタックを増やした */
+                          ctx,          /* Task input parameter */
+                          2,            /* Priority of the task */
+                          &drawTaskHandle);        /* Task handle. */
+
+  xTaskCreate(facialLoop,      /* Function to implement the task */
+                          "facialLoop",    /* Name of the task */
+                          2048,         /* Stack size in words */
+                          ctx,          /* Task input parameter */
+                          2,            /* Priority of the task */
+                          NULL);        /* Task handle. */
+}
+
+void Avatar::draw() {
+  Gaze g = Gaze(this->gazeV, this->gazeH);
+  DrawContext *ctx = new DrawContext(this->expression, this->breath,
+                                     &this->palette, g, this->eyeOpenRatio,
+                                     this->mouthOpenRatio, this->speechText,
+                                     this->rotation, this->scale, this->colorDepth, this->batteryIconStatus, this->batteryLevel, this->speechFont);
+  face->draw(ctx);
+  delete ctx;
+}
+
+bool Avatar::isDrawing() { return _isDrawing; }
+
+void Avatar::setExpression(Expression expression) {
+  this->expression = expression;
+}
+
+Expression Avatar::getExpression() {
+  return this->expression;
+}
+
+void Avatar::setBreath(float breath) { this->breath = breath; }
+
+float Avatar::getBreath() {
+  return this->breath;
+}
+
+void Avatar::setRotation(float radian) { this->rotation = radian; }
+
+void Avatar::setScale(float scale) { this->scale = scale; }
+
+void Avatar::setPosition(int top, int left) {
+  this->getFace()->getBoundingRect()->setPosition(top, left);
+}
+
+void Avatar::setColorPalette(ColorPalette cp) { palette = cp; }
+
+ColorPalette Avatar::getColorPalette(void) const { return this->palette; }
+
+void Avatar::setMouthOpenRatio(float ratio) { this->mouthOpenRatio = ratio; }
+
+void Avatar::setEyeOpenRatio(float ratio) { this->eyeOpenRatio = ratio; }
+
+void Avatar::setGaze(float vertical, float horizontal) {
+  this->gazeV = vertical;
+  this->gazeH = horizontal;
+}
+
+void Avatar::getGaze(float *vertical, float *horizontal) {
+  *vertical = this->gazeV;
+  *horizontal = this->gazeH; 
+}
+
+void Avatar::setSpeechText(const char *speechText) {
+  this->speechText = speechText;
+}
+
+void Avatar::setSpeechFont(const lgfx::IFont *speechFont) {
+  this->speechFont = speechFont;
+}
+
+void Avatar::setBatteryIcon(bool batteryIcon) {
+  if (!batteryIcon) {
+    batteryIconStatus = BatteryIconStatus::invisible;
+  } else {
+    batteryIconStatus = BatteryIconStatus::unknown;
+  }
+}
+
+void Avatar::setBatteryStatus(bool isCharging, int32_t batteryLevel) {
+  if (this->batteryIconStatus != BatteryIconStatus::invisible) {
+    if (isCharging) {
+      this->batteryIconStatus = BatteryIconStatus::charging;
+    } else {
+      this->batteryIconStatus = BatteryIconStatus::discharging;  
+    }
+    this->batteryLevel = batteryLevel;
+  }
+
+}
+
+//motoh
+void Avatar::updateSubWindowCam565(uint8_t* buf) {
+  face->subWindow->updateDrawContentCam565(buf);
+  face->subWindowPos->setPosition(0, 0);
+  face->subWindowPos->setSize(0, 0);
+}
+
+
+//motoh
+bool Avatar::updateSubWindowJpg(String& fname) {
+  bool result;
+  result = face->subWindow->updateDrawContentJpg(fname);
+  face->subWindowPos->setPosition(0, 0);
+  face->subWindowPos->setSize(0, 0);
+  return result;
+}
+
+//motoh
+void Avatar::updateSubWindowTxt(String txt, int top, int left, int width, int height){
+  face->subWindow->updateDrawContentTxt(txt);
+  face->subWindowPos->setPosition(top, left);
+  face->subWindowPos->setSize(width, height);
+}
+
+//motoh
+void Avatar::updateSubWindowQrcode(String& txt, int top) {
+  face->subWindow->updateDrawContentQrcode(txt);
+  face->subWindowPos->setPosition(top, 0);
+  face->subWindowPos->setSize(0, 0);
+}  
+
+//motoh
+void Avatar::set_isSubWindowEnable(bool isEnable){
+  face->subWindow->set_isDrawEnable(isEnable);
+}
+
+//motoh
+void Avatar::setFaceOffsetX(int16_t offset_x){
+  face->offset_x = offset_x;
+}
+
+//motoh
+void Avatar::setFaceOffsetY(int16_t offset_y){
+  face->offset_y = offset_y;
+}
+
+//motoh
+void Avatar::fadeoutStart(bool direction){
+  fadeoutDirection = direction;
+  fadeoutDoneFlag = false;
+}
+
+//motoh
+bool Avatar::isFadeoutDone(void){
+  return fadeoutDoneFlag;
+}
+
+//motoh
+void Avatar::fadeoutProcess(void){
+  if(!fadeoutDoneFlag){
+    fadeoutOffset += 60;
+    if(fadeoutDirection){
+      setFaceOffsetX(fadeoutOffset);
+    }
+    else{
+      setFaceOffsetX(-fadeoutOffset);
+    }
+
+    if(fadeoutOffset > 320){
+      fadeoutDoneFlag = true;
+      fadeoutOffset = 0;
+    }
+  }
+}
+
+
+}  // namespace m5avatar

@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>스택짱 컨트롤</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="schedules.js" defer></script>
+  <style>
+    html { font-size: 16px; }
+    body { font-family: Arial, sans-serif; margin: 1em; background: #f9f9f9; color: #222; }
+    .container { max-width: 38em; margin: auto; background: #fff; padding: 1.5em 1em; border-radius: 10px; box-shadow: 0 2px 8px #0001; }
+    h1 { font-size: 1.3em; margin: 0 0 0.5em; }
+    h2 { font-size: 1.1em; margin-top: 1.5em; border-top: 1px solid #eee; padding-top: 1em; }
+    label { display: block; margin: 0.6em 0 0.3em; font-weight: bold; font-size: 0.9em; }
+    textarea, input[type=text], input[type=number] {
+      width: 100%; padding: 0.6em; border-radius: 6px;
+      border: 1px solid #ccc; box-sizing: border-box; font-size: 0.95em;
+    }
+    textarea { height: 5em; resize: vertical; }
+    .time-row { display: flex; gap: 0.5em; align-items: center; flex-wrap: wrap; }
+    .time-row input[type=number] { width: 4em; }
+    .time-row label { display: inline; font-weight: normal; margin: 0; }
+    button {
+      padding: 0.7em 1.5em; font-size: 1em; border-radius: 6px;
+      border: none; background: #0077cc; color: #fff; cursor: pointer; margin-top: 0.5em;
+    }
+    button.secondary { background: #28a745; }
+    button:hover { opacity: 0.9; }
+    .slot { background: #f5f5f5; padding: 0.8em; border-radius: 6px; margin-bottom: 1em; }
+    .status { margin-top: 0.5em; font-size: 0.9em; min-height: 1.2em; }
+    .status.ok { color: #007700; }
+    .status.err { color: #cc2222; }
+    .note { font-size: 0.85em; color: #666; margin-top: 1.5em; }
+    a { color: #0077cc; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>스택짱 컨트롤</h1>
+    <p style="font-size:0.9em; color:#666;"><a href="/personalize.html">→ 페르소나(Role) 편집</a></p>
+
+    <h2>지금 바로 발화</h2>
+    <label for="sayNowText">스택짱에게 시킬 말</label>
+    <textarea id="sayNowText" placeholder="예: '안녕'이라고 인사해줘"></textarea>
+    <button type="button" id="sayNowBtn" class="secondary">지금 발화</button>
+    <div id="sayNowStatus" class="status"></div>
+
+    <h2>볼륨</h2>
+    <div class="time-row">
+      <input type="range" id="volSlider" min="0" max="255" step="1" style="flex:1;">
+      <span id="volReadout" style="min-width:3em; text-align:right; font-variant-numeric: tabular-nums;">--</span>
+    </div>
+    <button type="button" id="volSaveBtn">볼륨 저장</button>
+    <div id="volStatus" class="status"></div>
+
+    <h2>예약 메시지</h2>
+    <div id="slotsContainer"></div>
+    <button type="button" id="saveBtn">저장</button>
+    <div id="saveStatus" class="status"></div>
+
+    <p class="note">
+      ※ <b>멘트</b>만 바꾸면 다음 발화 때 즉시 적용 (재부팅 불필요).<br>
+      ※ <b>시간/평일전용</b> 변경은 재부팅 후 적용.
+    </p>
+  </div>
+</body>
+</html>

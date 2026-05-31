@@ -1,0 +1,11 @@
+# Build artifacts
+firmware/.pio/
+firmware/.vscode/
+firmware/data/
+firmware/lib/aquestalk/
+*.bin
+
+# OS
+.DS_Store
+Thumbs.db
+*~

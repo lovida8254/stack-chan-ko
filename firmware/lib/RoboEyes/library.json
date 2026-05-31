@@ -1,0 +1,10 @@
+{
+  "name": "RoboEyes",
+  "version": "1.1.1",
+  "description": "FluxGarage RoboEyes - smoothly animated robot eyes (vendored, header-only template). Adapted to M5GFX via a thin display adapter in src/mod/RoboEyes.",
+  "keywords": "display, robot, eyes, animation",
+  "frameworks": "arduino",
+  "platforms": "espressif32",
+  "license": "GPL-3.0-or-later",
+  "headers": "FluxGarage_RoboEyes.h"
+}
