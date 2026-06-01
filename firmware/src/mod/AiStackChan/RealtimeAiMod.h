@@ -25,6 +25,11 @@ private:
     // for alarm (Function Calling)
     void alarmEventHandler();
 
+    // 취침 모드 듣기 중지: 자는 동안 마이크 녹음을 멈춰 주변 소리에 반응 안 하게.
+    bool sleepHandled    = false;   // 현재 취침으로 인해 녹음을 멈춘 상태인지
+    bool sleepWasRecording = false; // 취침 진입 직전 녹음 중이었는지(깨어날 때 복구용)
+    void nightListenGuard();        // idle 에서 매 틱 호출: 취침 전이 감지 → 녹음 stop/복구
+
 public:
     RealtimeAiMod(bool _isOffline);
 

@@ -69,6 +69,12 @@ bool night_mode_is_night() {
     return g_isNight && sleepy;
 }
 
+// 순수 취침 상태: 밤 시간대(또는 음성 "잘자" 강제) 여부. sleepyBias 와 무관.
+// 듣기(마이크 녹음) 중지 판정에 사용 — 자는 동안 주변 소리에 반응 안 하게.
+bool night_mode_is_sleeping() {
+    return g_isNight;
+}
+
 static void load_from_spiffs() {
     NightConfig c;
     if (SPIFFS.exists(NIGHT_SPIFFS_PATH)) {

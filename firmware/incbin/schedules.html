@@ -12,7 +12,7 @@
     h1 { font-size: 1.3em; margin: 0 0 0.5em; }
     h2 { font-size: 1.1em; margin-top: 1.5em; border-top: 1px solid #eee; padding-top: 1em; }
     label { display: block; margin: 0.6em 0 0.3em; font-weight: bold; font-size: 0.9em; }
-    textarea, input[type=text], input[type=number] {
+    textarea, input[type=text], input[type=number], select {
       width: 100%; padding: 0.6em; border-radius: 6px;
       border: 1px solid #ccc; box-sizing: border-box; font-size: 0.95em;
     }
@@ -59,8 +59,9 @@
     <div id="saveStatus" class="status"></div>
 
     <p class="note">
-      ※ <b>멘트</b>만 바꾸면 다음 발화 때 즉시 적용 (재부팅 불필요).<br>
-      ※ <b>시간/평일전용</b> 변경은 재부팅 후 적용.
+      ※ <b>멘트·사운드</b>를 바꾸면 다음 발화 때 즉시 적용 (재부팅 불필요).<br>
+      ※ <b>시간/평일전용</b> 변경은 재부팅 후 적용.<br>
+      ※ <b>사운드</b>는 먼저 재생되고, 끝난 뒤 멘트가 나옵니다. 목록은 SD <code>/sfx</code> 폴더의 mp3 파일입니다.
     </p>
   </div>
 </body>

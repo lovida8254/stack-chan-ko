@@ -171,6 +171,10 @@ bool idle = 0;
 int idleInterval = 1; // basic interval between each eye repositioning in full seconds
 int idleIntervalVariation = 3; // interval variaton range in full seconds, random number inside of given range will be add to the basic idleInterval, set to 0 for no variation
 unsigned long idleAnimationTimer = 0; // for organising eyeblink timing
+// Idle vertical range limit (0..100 %): restrict idle eye repositioning to the
+// top portion of the usable area so eyes don't wander into the bottom of the
+// screen. 100 = full range (default), 67 = top two-thirds.
+byte idleVRangePercent = 100;
 
 // Animation - eyes confused: eyes shaking left and right
 bool confused = 0;
@@ -381,6 +385,13 @@ void setIdleMode(bool active, int interval, int variation){
 }
 void setIdleMode(bool active) {
   idle = active;
+}
+
+// Limit idle vertical wandering to the top <percent>% of the usable area (1..100).
+void setIdleVRange(byte percent) {
+  if(percent < 1) percent = 1;
+  if(percent > 100) percent = 100;
+  idleVRangePercent = percent;
 }
 
 // Set curious mode - the respectively outer eye gets larger when looking left or right
@@ -601,7 +612,10 @@ void drawEyes(){
   if(idle){
     if(millis() >= idleAnimationTimer){
       eyeLxNext = random(getScreenConstraint_X());
-      eyeLyNext = random(getScreenConstraint_Y());
+      // Restrict vertical idle range to the top idleVRangePercent of the usable area.
+      int yRange = (getScreenConstraint_Y() * idleVRangePercent) / 100;
+      if(yRange < 1) yRange = 1;
+      eyeLyNext = random(yRange);
       idleAnimationTimer = millis()+(idleInterval*1000)+(random(idleIntervalVariation)*1000); // calculate next time for eyes repositioning
     }
   }

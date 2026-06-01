@@ -681,13 +681,14 @@ String FunctionCall::save_note(const char* text){
       Serial.println(note);
       fs.write((uint8_t*)note.c_str(), note.length());
       fs.close();
-      SD.end();
+      // SD.end() しない: CoreS3 では SD と LCD が SPI バスを共有しており、ここで
+      // アンマウントすると以後の写真表示(PhotoFrame)等が「ファイルなし」で全滅する。
+      // fs.close() でハンドルは閉じているのでマウントは維持してよい。
       //response = "Note saved successfully";
       response = String("メモの保存成功。メモの内容：" + String(text));
     }
     else{
       response = "メモの保存に失敗しました";
-      SD.end();
     }
 
   }
@@ -720,12 +721,11 @@ String FunctionCall::delete_note(){
       note = "";
       fs.write((uint8_t*)note.c_str(), note.length());
       fs.close();
-      SD.end();
+      // SD.end() しない(save_note と同じ理由: 共有 SPI バスのアンマウントで写真が全滅)。
       response = "メモを消去しました";
     }
     else{
       response = "メモの消去に失敗しました";
-      SD.end();
     }
   }
   else{
@@ -797,11 +797,11 @@ String FunctionCall::get_bus_time(int nNext){
         fs.close();
 
       } else {
-        Serial.println("Failed to SD.open().");    
-        response = "時刻表の読み取りに失敗しました。";  
+        Serial.println("Failed to SD.open().");
+        response = "時刻表の読み取りに失敗しました。";
       }
 
-      SD.end();
+      // SD.end() しない(save_note と同じ理由: 共有 SPI バスのアンマウントで写真が全滅)。
     }
     else{
       response = "時刻表の読み取りに失敗しました。";

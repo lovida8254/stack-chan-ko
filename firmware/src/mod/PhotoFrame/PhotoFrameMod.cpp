@@ -116,6 +116,7 @@ void PhotoFrameMod::init(void)
   g_photoIdx = 0;
   String dir = pf_base_dir();
   sd_bus_lock();                       // CoreS3: ディレクトリ走査中も描画を止めてSDを確実に読む
+  SD.begin(GPIO_NUM_4, SPI, 25000000); // 他機能(メモ保存等)が SD.end() した後でも確実に再マウント
   photoRoot = SD.open(dir.c_str());
   createPhotoList(photoRoot);
   if (photoRoot) photoRoot.close();
@@ -264,6 +265,7 @@ void PhotoFrameMod::updatePhoto(){
 
   sd_bus_lock();
   {
+    SD.begin(GPIO_NUM_4, SPI, 25000000);   // 念のため再マウント(他機能の SD.end() で外れていても自己復旧)
     File pf = SD.open(fname.c_str());
     if (!pf) {
       notFound = true;

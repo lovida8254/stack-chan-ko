@@ -174,6 +174,9 @@ void RealtimeAiMod::idle(void)
   // Alarm (Function Calling)
   alarmEventHandler();
 
+  // 취침 모드 듣기 중지/복구 (스케줄 처리보다 먼저)
+  nightListenGuard();
+
   //スケジューラ処理
   if(!isOffline){
     run_schedule();
@@ -185,6 +188,7 @@ void RealtimeAiMod::idle(void)
   bool speaking = pRtLLM->isSpeaking();
   if (!roboeyes_view_qr_shown()) {
     if (speaking)                            roboeyes_view_set_status("");           // 발화 중엔 눈으로 표현
+    else if (night_mode_is_sleeping())       roboeyes_view_set_status("");           // 자는 중엔 상태문구 숨김(눈 감김)
     else if (pRtLLM->isRealtimeRecording())  roboeyes_view_set_status("듣는 중...");
     else                                     roboeyes_view_set_status("터치하면 시작");
   }
@@ -234,6 +238,31 @@ void RealtimeAiMod::toggleRealtimeRecord(void)
     pRtLLM->stopRealtimeRecord();
   }else{
     pRtLLM->startRealtimeRecord();
+  }
+}
+
+// 취침 진입 시 마이크 녹음을 멈추고(자는 동안 주변 소리에 반응 안 하게),
+// 깨어나면 취침 전 상태대로 복구. idle() 에서 매 틱 호출.
+void RealtimeAiMod::nightListenGuard(void)
+{
+  bool sleeping = night_mode_is_sleeping();
+
+  if (sleeping && !sleepHandled) {
+    // 막 취침 진입: 녹음 중이었으면 멈추고 기억해둔다.
+    sleepWasRecording = pRtLLM->isRealtimeRecording();
+    if (sleepWasRecording) {
+      pRtLLM->stopRealtimeRecord();
+      Serial.println("[night] sleep → stop listening (mic off)");
+    }
+    sleepHandled = true;
+  } else if (!sleeping && sleepHandled) {
+    // 막 기상: 취침 전 녹음 중이었다면 다시 시작.
+    if (sleepWasRecording && !pRtLLM->isRealtimeRecording()) {
+      pRtLLM->startRealtimeRecord();
+      Serial.println("[night] wake → resume listening (mic on)");
+    }
+    sleepHandled = false;
+    sleepWasRecording = false;
   }
 }
 

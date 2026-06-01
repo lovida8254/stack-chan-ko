@@ -13,7 +13,8 @@
 
 void   night_mode_init();
 void   night_mode_tick();          // poll from loop()
-bool   night_mode_is_night();      // read by IdleMotion to bias toward Sleepy
+bool   night_mode_is_night();      // read by IdleMotion to bias toward Sleepy (sleepyBias 의존)
+bool   night_mode_is_sleeping();   // 순수 취침 상태(밤시간 OR 강제취침). sleepyBias 와 무관 — 듣기 중지 판정용
 String night_mode_get_json();
 bool   night_mode_set_json(const String& json);
 void   night_mode_force_sleep(bool sleep);   // voice "잘자"→true(취침), "일어나"→false(스케줄 복귀)

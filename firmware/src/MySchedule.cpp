@@ -26,15 +26,16 @@ struct ScheduleItem {
     int min;
     bool weekdayOnly;
     String prompt;
-    bool alarm;           // true 면 그 시간에 알람 소리(sfx event "alarm") 직접 재생
+    bool alarm;           // true 면 그 시간에 알람 소리(sfx event "alarm") 직접 재생 (하위호환)
+    String sound;         // 그 시간에 먼저 재생할 SD sfx mp3 파일명("" = 없음). 멘트보다 먼저 재생.
 };
 
 static ScheduleItem g_schedules[SCHEDULE_SLOT_COUNT] = {
-    { 0,  0, false, "지금 자정이야. 가족에게 잘 시간이라고 알려줘. 이렇게 말해: '이제 잘 시간인데 다들 잘 준비 하고 있어?'", false },
-    { 7,  0, true,  "지금 평일 아침 7시야. 밝게 이렇게 말해: '아침이야 이제 일어날 준비를 하자~!!'", false },
-    { 8, 10, true,  "지금 평일 아침 8시 10분이야. 가족에게 '좋은 아침이야~!' 하고 밝게 인사한 뒤, 오늘 날씨와 급식을 알려주고, 마지막에 따뜻한 응원 한마디를 해줘. 각 항목은 한 줄로 아주 짧게.", false },
-    { 7,  0, false, "", false },   // 자유 슬롯(알람 등) — 기본 비활성(멘트 없음/알람 off)
-    { 7, 30, false, "", false },   // 자유 슬롯
+    { 0,  0, false, "지금 자정이야. 가족에게 잘 시간이라고 알려줘. 이렇게 말해: '이제 잘 시간인데 다들 잘 준비 하고 있어?'", false, "" },
+    { 7,  0, true,  "지금 평일 아침 7시야. 밝게 이렇게 말해: '아침이야 이제 일어날 준비를 하자~!!'", false, "" },
+    { 8, 10, true,  "지금 평일 아침 8시 10분이야. 가족에게 '좋은 아침이야~!' 하고 밝게 인사한 뒤, 오늘 날씨와 급식을 알려주고, 마지막에 따뜻한 응원 한마디를 해줘. 각 항목은 한 줄로 아주 짧게.", false, "" },
+    { 7,  0, false, "", false, "" },   // 자유 슬롯(알람 등) — 기본 비활성(멘트 없음/사운드 없음)
+    { 7, 30, false, "", false, "" },   // 자유 슬롯
 };
 
 static bool is_weekday_now()
@@ -61,8 +62,10 @@ static void sched_fire(int i) {
     if (g_schedules[i].weekdayOnly && !is_weekday_now()) { Serial.printf("[sched] slot %d skipped (weekend)\n", i); return; }
     Serial.printf("[sched] slot %d fire (%02d:%02d) alarm=%d\n", i,
                   g_schedules[i].hour, g_schedules[i].min, (int)g_schedules[i].alarm);
-    if (g_schedules[i].alarm) sfx_play_event("alarm");           // 알람 소리 직접 재생(블로킹)
-    if (g_schedules[i].prompt.length()) scheduled_speak(g_schedules[i].prompt);   // 멘트 있으면 발화
+    // 사운드 먼저(블로킹) → 그 다음 멘트. sound 가 지정되면 그 파일을, 없고 alarm 이면 알람 이벤트를 재생.
+    if (g_schedules[i].sound.length())      sfx_play_file(g_schedules[i].sound.c_str());   // 선택한 SD sfx mp3 재생(블로킹)
+    else if (g_schedules[i].alarm)          sfx_play_event("alarm");                       // 하위호환: 알람 소리
+    if (g_schedules[i].prompt.length()) scheduled_speak(g_schedules[i].prompt);   // 멘트 있으면 발화(사운드 끝난 뒤)
 }
 static void sched_slot_0() { sched_fire(0); }
 static void sched_slot_1() { sched_fire(1); }
@@ -94,7 +97,8 @@ static void load_schedules_from_spiffs()
         if (o.containsKey("min"))         g_schedules[i].min         = o["min"];
         if (o.containsKey("weekdayOnly")) g_schedules[i].weekdayOnly = o["weekdayOnly"];
         if (o.containsKey("alarm"))       g_schedules[i].alarm       = o["alarm"];
-        if (o.containsKey("prompt"))      g_schedules[i].prompt      = String((const char*)(o["prompt"] | ""));   // 빈값=멘트 없음(알람 전용)
+        if (o.containsKey("sound"))       g_schedules[i].sound       = String((const char*)(o["sound"] | ""));    // 먼저 재생할 sfx mp3 파일명
+        if (o.containsKey("prompt"))      g_schedules[i].prompt      = String((const char*)(o["prompt"] | ""));   // 빈값=멘트 없음(사운드 전용)
     }
     Serial.println("[sched] loaded schedules from SPIFFS");
 }
@@ -133,6 +137,7 @@ String get_schedules_json()
         o["min"]         = g_schedules[i].min;
         o["weekdayOnly"] = g_schedules[i].weekdayOnly;
         o["alarm"]       = g_schedules[i].alarm;
+        o["sound"]       = g_schedules[i].sound;
         o["prompt"]      = g_schedules[i].prompt;
     }
     String result;
@@ -154,7 +159,8 @@ bool set_schedules_json(const String& json)
         if (o.containsKey("min"))         g_schedules[i].min         = o["min"];
         if (o.containsKey("weekdayOnly")) g_schedules[i].weekdayOnly = o["weekdayOnly"];
         if (o.containsKey("alarm"))       g_schedules[i].alarm       = o["alarm"];
-        if (o.containsKey("prompt"))      g_schedules[i].prompt      = String((const char*)(o["prompt"] | ""));   // 빈값=멘트 없음(알람 전용)
+        if (o.containsKey("sound"))       g_schedules[i].sound       = String((const char*)(o["sound"] | ""));    // 먼저 재생할 sfx mp3 파일명
+        if (o.containsKey("prompt"))      g_schedules[i].prompt      = String((const char*)(o["prompt"] | ""));   // 빈값=멘트 없음(사운드 전용)
     }
     File f = SPIFFS.open(SCHEDULES_SPIFFS_PATH, "w");
     if (!f) {

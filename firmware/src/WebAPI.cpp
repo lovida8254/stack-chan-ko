@@ -16,6 +16,7 @@
 #include "Proximity.h"
 #include "WifiConfig.h"
 #include "CameraVision.h"
+#include "face/RoboEyesView.h"   // 감정별 눈 색 get/set
 #include "Persona.h"
 #include "Sfx.h"
 #include "mod/PhotoFrame/PhotoFrameMod.h"
@@ -166,7 +167,7 @@ IMPORT_FILE(.rodata, "schedules.html", schedules_html);
 IMPORT_FILE(.rodata, "schedules.js", schedules_js);
 IMPORT_FILE(.rodata, "settings.html", settings_html);
 IMPORT_FILE(.rodata, "settings.js", settings_js);
-// incbin re-embed touch: settings.html/js 수정 시 이 파일을 재컴파일해야 반영됨(v12)
+// incbin re-embed touch: settings.html/js 수정 시 이 파일을 재컴파일해야 반영됨(v15: 감정별 눈색 설정)
 
 
 // Settings page changes every firmware build; without this the browser may serve a
@@ -335,6 +336,18 @@ void handle_night_get() {
 void handle_night_set() {
   if (server.method() != HTTP_POST) { server.send(405, "text/plain", "POST only"); return; }
   if (night_mode_set_json(server.arg("plain")))
+    server.send(200, "text/plain", "ok");
+  else
+    server.send(400, "text/plain", "invalid JSON or write failed");
+}
+
+// ---- Eye color (감정별 눈 그라데이션) --------------------------------------
+void handle_eyecolor_get() {
+  server.send(200, "application/json", roboeyes_eyecolor_get_json());
+}
+void handle_eyecolor_set() {
+  if (server.method() != HTTP_POST) { server.send(405, "text/plain", "POST only"); return; }
+  if (roboeyes_eyecolor_set_json(server.arg("plain")))
     server.send(200, "text/plain", "ok");
   else
     server.send(400, "text/plain", "invalid JSON or write failed");
@@ -707,6 +720,9 @@ void init_web_server(void)
   server.on("/batt_set", HTTP_POST, handle_batt_set);
   server.on("/night_get", handle_night_get);
   server.on("/night_set", HTTP_POST, handle_night_set);
+  // Eye color (감정별 눈 그라데이션)
+  server.on("/eyecolor_get", handle_eyecolor_get);
+  server.on("/eyecolor_set", HTTP_POST, handle_eyecolor_set);
   // WiFi config (apply on reboot)
   server.on("/wifi_get", handle_wifi_get);
   server.on("/wifi_set", HTTP_POST, handle_wifi_set);

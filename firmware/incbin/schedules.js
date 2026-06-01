@@ -15,6 +15,21 @@
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
+  // 사운드 드롭다운 후보(SD /sfx 폴더의 mp3). loadSfxFiles() 가 채움.
+  let sfxFiles = [];
+
+  function soundOptions(selected) {
+    let html = '<option value="">(사운드 없음)</option>';
+    sfxFiles.forEach((f) => {
+      html += '<option value="' + esc(f) + '"' + (f === selected ? ' selected' : '') + '>' + esc(f) + '</option>';
+    });
+    // 저장된 값이 현재 목록에 없으면(파일 삭제 등) 그 값도 보존해서 표시.
+    if (selected && sfxFiles.indexOf(selected) < 0) {
+      html += '<option value="' + esc(selected) + '" selected>' + esc(selected) + ' (없음?)</option>';
+    }
+    return html;
+  }
+
   function renderSlots(items) {
     slots.innerHTML = '';
     items.forEach((it, idx) => {
@@ -27,22 +42,34 @@
           ' : ' +
           '<input type="number" min="0" max="59" id="min-' + idx + '" value="' + (it.min | 0) + '">' +
           '<label><input type="checkbox" id="wd-' + idx + '"' + (it.weekdayOnly ? ' checked' : '') + '> 평일만</label>' +
-          '<label><input type="checkbox" id="alarm-' + idx + '"' + (it.alarm ? ' checked' : '') + '> 알람 소리</label>' +
         '</div>' +
-        '<label for="prompt-' + idx + '">멘트 (비우면 알람 소리만)</label>' +
+        '<label for="sound-' + idx + '">사운드 (멘트보다 먼저 재생)</label>' +
+        '<select id="sound-' + idx + '">' + soundOptions(it.sound || '') + '</select>' +
+        '<label for="prompt-' + idx + '">멘트 (비우면 사운드만)</label>' +
         '<textarea id="prompt-' + idx + '">' + esc(it.prompt || '') + '</textarea>';
       slots.appendChild(div);
     });
   }
 
-  function loadSchedules() {
-    fetch('/schedules_get')
+  // 슬롯 렌더 전에 sfx 파일 목록을 먼저 받아온다(드롭다운 채우기용).
+  function loadSfxFiles() {
+    return fetch('/sfx_get')
       .then(r => r.json())
-      .then(data => {
-        renderSlots(data.items || []);
-        setStatus(saveStatus, '로드 완료 (슬롯 ' + (data.items || []).length + '개)', true);
-      })
-      .catch(e => setStatus(saveStatus, '로드 실패: ' + e, false));
+      .then(data => { sfxFiles = (data.files || []).slice(); })
+      .catch(() => { sfxFiles = []; });
+  }
+
+  function loadSchedules() {
+    // sfx 파일 목록을 먼저 받아 드롭다운을 채운 뒤 슬롯을 렌더한다.
+    loadSfxFiles().then(() =>
+      fetch('/schedules_get')
+        .then(r => r.json())
+        .then(data => {
+          renderSlots(data.items || []);
+          setStatus(saveStatus, '로드 완료 (슬롯 ' + (data.items || []).length + '개)', true);
+        })
+        .catch(e => setStatus(saveStatus, '로드 실패: ' + e, false))
+    );
   }
 
   saveBtn.addEventListener('click', () => {
@@ -52,7 +79,7 @@
         hour: parseInt(document.getElementById('hour-' + idx).value, 10),
         min: parseInt(document.getElementById('min-' + idx).value, 10),
         weekdayOnly: document.getElementById('wd-' + idx).checked,
-        alarm: document.getElementById('alarm-' + idx).checked,
+        sound: document.getElementById('sound-' + idx).value,
         prompt: document.getElementById('prompt-' + idx).value,
       });
     });

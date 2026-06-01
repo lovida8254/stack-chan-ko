@@ -21,6 +21,7 @@
 #include "NightMode.h"
 #include "Proximity.h"
 #include "WifiConfig.h"
+#include "face/RoboEyesView.h"   // 감정별 눈 색 설정 로드
 #include "Persona.h"
 #include "DiagLog.h"
 #include "Sfx.h"
@@ -140,6 +141,9 @@ void servo(void *args)
   float gazeX, gazeY;
   DriveContext *ctx = (DriveContext *)args;
   Avatar *avatar = ctx->getAvatar();
+  // 시선 추종을 200ms 주기로 자주 확인해 눈 이동과 거의 동시에 머리가 따라가게 한다.
+  // 단 목표 각도가 바뀌었을 때만 moveTo 를 호출해 매 틱 미세 진동/소음을 막는다.
+  int prevTgtX = 999, prevTgtY = 999;   // 마지막으로 명령한 목표 각도(초기값=강제 첫 이동)
   for (;;)
   {
 #ifdef USE_SERVO
@@ -147,6 +151,7 @@ void servo(void *args)
     if(millis() < g_servoManualUntil)
     {
       robot->servo->moveTo(g_servoManualX, g_servoManualY, 60);   // 짧은 이징=빠른 추종
+      prevTgtX = prevTgtY = 999;   // 수동 종료 후 시선 추종이 다시 명령하도록 리셋
       delay(25);
       continue;
     }
@@ -158,19 +163,40 @@ void servo(void *args)
     }
 
     if(millis() < gesture_suppress_until){
-      delay(200);
+      prevTgtX = prevTgtY = 999;   // 제스처 종료 후 시선 위치로 복귀 명령 보장
+      delay(100);
       continue;
     }
 
+    // 목표 각도 계산: 발화 중/idle 모두 시선을 따라가되, idle 중 수면이거나 시선이
+    // 거의 중앙이면 정면(0,0). (발화 중엔 항상 시선 추종.)
+    int tgtX, tgtY;
     if(!servo_home)
     {
       avatar->getGaze(&gazeY, &gazeX);
-      robot->servo->moveTo((int)(15.0 * gazeX), (int)(10.0 * gazeY));
-    } else {
-      robot->servo->moveToOrigin();
+      tgtX = (int)(15.0 * gazeX);
+      tgtY = (int)(10.0 * gazeY);
+    }
+    else if(night_mode_is_sleeping())
+    {
+      tgtX = 0; tgtY = 0;
+    }
+    else
+    {
+      avatar->getGaze(&gazeY, &gazeX);
+      if(fabs(gazeX) < 0.15 && fabs(gazeY) < 0.15) { tgtX = 0; tgtY = 0; }   // 시선 중앙 → 정면
+      else { tgtX = (int)(15.0 * gazeX); tgtY = (int)(10.0 * gazeY); }
+    }
+
+    // 목표가 바뀐 경우에만 이동(떨림/소음 방지). 이징 200ms 로 부드럽게.
+    if(tgtX != prevTgtX || tgtY != prevTgtY)
+    {
+      if(tgtX == 0 && tgtY == 0) robot->servo->moveToOrigin();
+      else                       robot->servo->moveTo(tgtX, tgtY, 200);
+      prevTgtX = tgtX; prevTgtY = tgtY;
     }
 #endif
-    delay(2000);
+    delay(200);
   }
 }
 
@@ -680,6 +706,7 @@ void setup()
   touch_reaction_init();
   battery_reaction_init();
   night_mode_init();
+  roboeyes_eyecolor_init();   // 감정별 눈 그라데이션 색(SPIFFS) 로드
 
   //ヒープメモリ残量確認(デバッグ用)
   check_heap_free_size();

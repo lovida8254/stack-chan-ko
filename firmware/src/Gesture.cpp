@@ -49,7 +49,8 @@ static void gesture_task(void* arg) {
     switch(e){
       case Expression::Happy: {
         // 긍정/기쁨 = 상하로 빠르게 끄덕끄덕 (degY 음수 = 고개 숙임, 0 = 중앙). 좌우 흔들기에서 변경.
-        const GestureStep s[] = {{0, -22, 160}, {0, 0, 140}, {0, -22, 160}, {0, 0, 140}};
+        // 범위 살짝 축소(-22→-15) + 속도 향상(160/140→100/85ms).
+        const GestureStep s[] = {{0, -15, 100}, {0, 0, 85}, {0, -15, 100}, {0, 0, 85}};
         play_sequence(s, 4, 0);
         break;
       }

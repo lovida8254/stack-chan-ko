@@ -1,5 +1,7 @@
 #include <Arduino.h>
 #include <M5Unified.h>
+#include <SPIFFS.h>
+#include <ArduinoJson.h>
 #include <Avatar.h>                 // m5avatar::Expression, Avatar (getExpression)
 #include "face/RoboEyesView.h"
 #include "NightMode.h"              // night_mode_is_night() — 수면/밤모드 눈 감기
@@ -19,14 +21,74 @@ namespace m5avatar {
 }
 
 namespace {
+// 눈 세로 그라데이션 색(RGB565). 위(밝은쪽)→아래(진한쪽)로 보간해 입체감.
+// 감정별로 (top,bot) 두 색을 갖는다. applyMood 에서 표정 바뀔 때 현재색 갱신.
+static uint16_t g_eyeTop = 0xFF0C;   // 현재 적용 중인 위쪽 색(기본: 밝은 노랑빛)
+static uint16_t g_eyeBot = 0xFB60;   // 현재 적용 중인 아래쪽 색(기본: 진한 주황)
+
+// m5avatar::Expression 6종별 그라데이션 색 (top=밝은쪽, bot=진한쪽).
+// (2단계 고정 프리셋. 3단계에서 설정 페이지로 사용자가 바꿀 수 있게 확장)
+struct EyeGrad { uint16_t top, bot; };
+static EyeGrad g_eyeGrad[6] = {
+  /* Neutral */ { 0xFF0C, 0xFB60 },   // 주황 (밝은노랑 → 진한주황) 기본·따뜻
+  /* Happy   */ { 0xFFE0, 0xFD20 },   // 노랑 → 주황 (밝고 경쾌)
+  /* Sleepy  */ { 0x8C1F, 0x400F },   // 연보라 → 남보라 (어둑·졸림)
+  /* Doubt   */ { 0x9FFF, 0x05FF },   // 밝은 시안 → 파랑 (호기심)
+  /* Sad     */ { 0x6E7F, 0x021F },   // 하늘 → 진한 파랑 (차분·슬픔)
+  /* Angry   */ { 0xFE0C, 0xF800 },   // 주황빛 → 빨강 (강렬·분노)
+};
+// expr(Expression 값) → g_eyeGrad 인덱스
+static int eyegrad_index(int expr) {
+  switch (expr) {
+    case (int)Expression::Happy:  return 1;
+    case (int)Expression::Sleepy: return 2;
+    case (int)Expression::Doubt:  return 3;
+    case (int)Expression::Sad:    return 4;
+    case (int)Expression::Angry:  return 5;
+    default:                      return 0;   // Neutral
+  }
+}
+
+// RGB565 두 색을 t(0..256)로 선형 보간.
+static inline uint16_t lerp565(uint16_t a, uint16_t b, int t) {
+  int ar = (a >> 11) & 0x1F, ag = (a >> 5) & 0x3F, ab = a & 0x1F;
+  int br = (b >> 11) & 0x1F, bg = (b >> 5) & 0x3F, bb = b & 0x1F;
+  int r = ar + (((br - ar) * t) >> 8);
+  int g = ag + (((bg - ag) * t) >> 8);
+  int bl = ab + (((bb - ab) * t) >> 8);
+  return (uint16_t)((r << 11) | (g << 5) | bl);
+}
+
 // M5GFX 어댑터: RoboEyes 의 4개 호출을 M5Canvas 스프라이트(PSRAM)에 매핑.
-// color(uint8_t 0/1) → RGB565 팔레트(검정/시안) 번역.
+// color(uint8_t 0/1): 0=배경(검정), 1=눈(세로 그라데이션).
 class M5RoboDisplay {
 public:
   M5Canvas* cv = nullptr;
-  uint16_t pal[2] = { 0x0000, 0x07FF };  // 0=배경(검정), 1=메인(시안)
+  uint16_t pal[2] = { 0x0000, 0x07FF };  // 0=배경(검정), 1=(미사용, 그라데이션이 대체)
   void clearDisplay() { if (cv) cv->fillScreen(pal[0]); }
-  void fillRoundRect(int x, int y, int w, int h, int r, uint8_t c) { if (cv) cv->fillRoundRect(x, y, w, h, r, pal[c & 1]); }
+  void fillRoundRect(int x, int y, int w, int h, int r, uint8_t c) {
+    if (!cv) return;
+    if ((c & 1) == 0) { cv->fillRoundRect(x, y, w, h, r, pal[0]); return; }  // 배경/눈꺼풀(검정)은 단색
+    if (h <= 0 || w <= 0) return;
+    // 눈: y줄마다 위→아래 색을 보간하고, 둥근 모서리 행에서는 좌우 인셋을 계산해
+    // 라운드렉트 실제 모양대로 가로선을 그린다(세로 그라데이션 + 둥근 모서리).
+    if (r > w / 2) r = w / 2;
+    if (r > h / 2) r = h / 2;
+    for (int j = 0; j < h; j++) {
+      int inset = 0;
+      if (j < r) {                       // 위쪽 모서리 행
+        int dy = r - 1 - j;
+        inset = r - (int)(sqrtf((float)(r * r - dy * dy)) + 0.5f);
+      } else if (j >= h - r) {           // 아래쪽 모서리 행
+        int dy = j - (h - r);
+        inset = r - (int)(sqrtf((float)(r * r - dy * dy)) + 0.5f);
+      }
+      int lw = w - 2 * inset;
+      if (lw <= 0) continue;
+      uint16_t col = lerp565(g_eyeTop, g_eyeBot, (j * 256) / (h > 1 ? h - 1 : 1));
+      cv->drawFastHLine(x + inset, y + j, lw, col);
+    }
+  }
   void fillTriangle(int x1, int y1, int x2, int y2, int x3, int y3, uint8_t c) { if (cv) cv->fillTriangle(x1, y1, x2, y2, x3, y3, pal[c & 1]); }
   void display() { /* no-op: RoboEyesView 가 오버레이 합성 후 직접 pushSprite */ }
 };
@@ -69,6 +131,11 @@ void applyMood(int expr) {
   g_eyes.setHeight(EYE_H, EYE_H);
   g_eyes.setIdleMode(ON, 2, 2);     // idle 켜짐 = 시선 다시 자유롭게 이동
 
+  // 감정별 눈 그라데이션 색 적용(현재색 갱신 → 다음 drawEyes 부터 반영)
+  EyeGrad eg = g_eyeGrad[eyegrad_index(expr)];
+  g_eyeTop = eg.top;
+  g_eyeBot = eg.bot;
+
   switch (expr) {
     case (int)Expression::Happy:
       g_eyes.setMood(HAPPY);                 // 아래 눈꺼풀 곡선(웃는 눈)
@@ -80,11 +147,14 @@ void applyMood(int expr) {
       g_eyes.setMood(TIRED);                 // 바깥 위 눈꺼풀 처짐(반쯤 감김)
       break;
     case (int)Expression::Sad:
-      // 풀죽음: 졸린 처짐 + 눈 작게 + 아래를 바라봄
+      // 풀죽음: 졸린 처짐 + 눈 작게 + 살짝 아래를 바라봄(맨 아래까지 X).
       g_eyes.setMood(TIRED);
       g_eyes.setHeight((byte)(EYE_H * SAD_SCALE), (byte)(EYE_H * SAD_SCALE));
       g_eyes.setIdleMode(OFF);
-      g_eyes.setPosition(S);                 // 시선 아래로
+      // setPosition(S)는 화면 최하단(getScreenConstraint_Y)으로 내려가 하단 텍스트와 겹침.
+      // 대신 사용 가능 세로범위의 약 55% 지점으로만 살짝 내린다.
+      g_eyes.eyeLyNext = (g_eyes.getScreenConstraint_Y() * 55) / 100;
+      g_eyes.eyeLxNext = g_eyes.getScreenConstraint_X() / 2;   // 가로 중앙
       break;
     case (int)Expression::Doubt:
       // 회의적 "음?": 한쪽 눈 찡그림(비대칭) + 잠깐 좌우 흔들
@@ -116,6 +186,7 @@ void roboeyes_view_begin() {
   g_eyes.setSpacebetween(44);
   g_eyes.setAutoblinker(ON, 3, 2);     // 3초(+0~2초)마다 깜빡
   g_eyes.setIdleMode(ON, 2, 2);        // 2초(+0~2초)마다 시선 이동
+  g_eyes.setIdleVRange(67);            // 시선 상하 이동을 화면 상단 2/3로 제한(아랫부분 미사용)
   g_ready = true;
   Serial.println("[roboeyes] view ready (320x240, PSRAM)");
 }
@@ -198,11 +269,11 @@ void roboeyes_view_render() {
     if (v > 1) v = 1; else if (v < -1) v = -1;
     avatar.setGaze(v, h);
 
-    if (!g_sleeping && g_status.length()) {   // 상단 상태 텍스트 오버레이(자는 중엔 숨김)
+    if (!g_sleeping && g_status.length()) {   // 하단 상태 텍스트 오버레이(자는 중엔 숨김)
       g_cv->setFont(&fonts::efontKR_16);
-      g_cv->setTextColor(0x07FF, 0x0000);
-      g_cv->setTextDatum(textdatum_t::top_center);
-      g_cv->drawString(g_status.c_str(), 160, 4);
+      g_cv->setTextColor(0xFFFF, 0x0000);     // 흰색
+      g_cv->setTextDatum(textdatum_t::bottom_center);
+      g_cv->drawString(g_status.c_str(), 160, 236);   // 화면 하단(240 높이, 약간 여백)
     }
   }
   g_cv->pushSprite(0, 0);
@@ -215,3 +286,76 @@ void roboeyes_view_set_qr(const char* url)      { if (url) { g_qrUrl = url; g_qr
 void roboeyes_view_clear_qr()                   { g_qrOn = false; }
 bool roboeyes_view_qr_shown()                   { return g_qrOn; }
 void roboeyes_view_set_talk(float level)        { g_talkLevel = (level < 0) ? 0 : (level > 1 ? 1 : level); }
+
+// ── 감정별 눈 그라데이션 색: SPIFFS 저장/로드 + 웹 JSON ──────────────────────
+#define EYECOLOR_CFG "/eyecolor.json"
+// g_eyeGrad 인덱스(0..5) ↔ JSON 키. eyegrad_index 의 매핑과 일치.
+static const char* kEyeKeys[6] = { "neutral", "happy", "sleepy", "doubt", "sad", "angry" };
+
+static uint16_t hex_to_565(const char* s) {
+  if (!s || s[0] != '#') return 0;
+  long v = strtol(s + 1, nullptr, 16);
+  int r = (v >> 16) & 0xFF, g = (v >> 8) & 0xFF, b = v & 0xFF;
+  return (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
+}
+static String c565_to_hex(uint16_t c) {
+  int r = ((c >> 11) & 0x1F) << 3, g = ((c >> 5) & 0x3F) << 2, b = (c & 0x1F) << 3;
+  char buf[8]; snprintf(buf, sizeof(buf), "#%02X%02X%02X", r, g, b);
+  return String(buf);
+}
+
+// 현재 표정의 색을 즉시 다시 반영(설정 저장 직후 화면에 바로 보이게).
+static void reapply_current_eyecolor() {
+  int idx = eyegrad_index((int)avatar.getExpression());
+  g_eyeTop = g_eyeGrad[idx].top;
+  g_eyeBot = g_eyeGrad[idx].bot;
+}
+
+void roboeyes_eyecolor_init() {
+  if (!SPIFFS.exists(EYECOLOR_CFG)) { Serial.println("[eyecolor] no config — using defaults"); return; }
+  File f = SPIFFS.open(EYECOLOR_CFG, "r");
+  if (!f) return;
+  DynamicJsonDocument doc(1024);
+  if (!deserializeJson(doc, f)) {
+    for (int i = 0; i < 6; i++) {
+      JsonObject o = doc[kEyeKeys[i]];
+      if (o.isNull()) continue;
+      const char* t = o["top"] | ""; const char* b = o["bot"] | "";
+      if (t && *t) g_eyeGrad[i].top = hex_to_565(t);
+      if (b && *b) g_eyeGrad[i].bot = hex_to_565(b);
+    }
+    Serial.println("[eyecolor] loaded from SPIFFS");
+  }
+  f.close();
+  reapply_current_eyecolor();
+}
+
+String roboeyes_eyecolor_get_json() {
+  DynamicJsonDocument doc(1024);
+  for (int i = 0; i < 6; i++) {
+    JsonObject o = doc.createNestedObject(kEyeKeys[i]);
+    o["top"] = c565_to_hex(g_eyeGrad[i].top);
+    o["bot"] = c565_to_hex(g_eyeGrad[i].bot);
+  }
+  String out; serializeJson(doc, out);
+  return out;
+}
+
+bool roboeyes_eyecolor_set_json(const String& json) {
+  DynamicJsonDocument doc(1024);
+  if (deserializeJson(doc, json)) return false;
+  for (int i = 0; i < 6; i++) {
+    JsonObject o = doc[kEyeKeys[i]];
+    if (o.isNull()) continue;
+    const char* t = o["top"] | ""; const char* b = o["bot"] | "";
+    if (t && *t) g_eyeGrad[i].top = hex_to_565(t);
+    if (b && *b) g_eyeGrad[i].bot = hex_to_565(b);
+  }
+  File f = SPIFFS.open(EYECOLOR_CFG, "w");
+  if (!f) { Serial.println("[eyecolor] SPIFFS open(w) failed"); return false; }
+  String out = roboeyes_eyecolor_get_json();
+  f.print(out); f.close();
+  reapply_current_eyecolor();   // 즉시 반영
+  Serial.println("[eyecolor] saved");
+  return true;
+}

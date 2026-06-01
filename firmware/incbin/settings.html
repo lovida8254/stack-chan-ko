@@ -303,15 +303,14 @@
     </div>
   </details>
 
-  <!-- ============ 카메라 비전 ============ -->
+  <!-- ============ 눈 색 (감정별 그라데이션) ============ -->
   <details>
-    <summary>카메라 둘러보기 (GPT-4o 비전)</summary>
+    <summary>눈 색 (감정별 그라데이션)</summary>
     <div class="body">
-      <label for="lookHint">무엇을 물어볼지 (비우면 "뭐가 보여?")</label>
-      <textarea id="lookHint" style="height:3em" placeholder="예: 지금 앞에 누가 있어?"></textarea>
-      <button type="button" id="lookBtn" class="secondary">지금 둘러보기</button>
-      <div id="lookStatus" class="status"></div>
-      <p class="note">⚠️ <b>카메라 빌드(...-camera)</b>로 플래시했을 때 + 온라인일 때만 동작합니다. 일반 빌드에서는 비활성.</p>
+      <p class="note">감정마다 눈 그라데이션 색을 정해요. 위(밝은쪽) · 아래(진한쪽) 두 색으로 입체감이 납니다.</p>
+      <div id="eyeColorList"></div>
+      <button type="button" id="eyeColorSaveBtn">눈 색 저장</button>
+      <div id="eyeColorStatus" class="status"></div>
     </div>
   </details>
 

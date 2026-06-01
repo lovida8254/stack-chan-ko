@@ -132,13 +132,17 @@ bool playMP3SD(const char *filename)
     }
     else{
       AudioFileSourceBuffer *buff = new AudioFileSourceBuffer(file_mp3, preallocateBuffer, preallocateBufferSize);
-      avatar.setExpression(Expression::Happy);
+      // 재생 전 표정을 저장했다가 끝난 뒤 복원한다. (감정 효과음 재생이 방금 설정된
+      // 감정 표정 — 예: 슬픔 — 을 Happy/Neutral 로 덮어써서 "소리만 감정, 눈은 평범"
+      // 해지던 문제 수정.) servo_home 도 동일하게 복원.
+      Expression prevExpr = avatar.getExpression();
+      bool prevServoHome = servo_home;
       servo_home = false;
 
       playMP3(buff);
-      
-      avatar.setExpression(Expression::Neutral);
-      servo_home = true;
+
+      avatar.setExpression(prevExpr);
+      servo_home = prevServoHome;
 
       delete file_mp3;
       delete buff;

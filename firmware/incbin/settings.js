@@ -88,6 +88,19 @@
   });
 
   // ---------- 예약 ----------
+  let g_schedSfxFiles = [];   // SD /sfx 폴더의 mp3 목록(예약 사운드 드롭다운용)
+
+  function schedSoundOptions(selected) {
+    let html = '<option value="">(사운드 없음)</option>';
+    g_schedSfxFiles.forEach(f => {
+      html += '<option value="' + esc(f) + '"' + (f === selected ? ' selected' : '') + '>' + esc(f) + '</option>';
+    });
+    if (selected && g_schedSfxFiles.indexOf(selected) < 0) {
+      html += '<option value="' + esc(selected) + '" selected>' + esc(selected) + ' (없음?)</option>';
+    }
+    return html;
+  }
+
   function renderSlots(items) {
     const c = $('slotsContainer'); c.innerHTML = '';
     items.forEach((it, idx) => {
@@ -99,15 +112,18 @@
           '<input type="number" min="0" max="23" id="sh-' + idx + '" value="' + (it.hour | 0) + '"> : ' +
           '<input type="number" min="0" max="59" id="sm-' + idx + '" value="' + (it.min | 0) + '">' +
           '<label><input type="checkbox" id="sw-' + idx + '"' + (it.weekdayOnly ? ' checked' : '') + '> 평일만</label>' +
-          '<label><input type="checkbox" id="sa-' + idx + '"' + (it.alarm ? ' checked' : '') + '> 알람 소리</label>' +
         '</div>' +
-        '<label for="sp-' + idx + '">멘트 (비우면 알람 소리만)</label>' +
+        '<label for="ss-' + idx + '">사운드 (멘트보다 먼저 재생)</label>' +
+        '<select id="ss-' + idx + '">' + schedSoundOptions(it.sound || '') + '</select>' +
+        '<label for="sp-' + idx + '">멘트 (비우면 사운드만)</label>' +
         '<textarea id="sp-' + idx + '" style="height:3.5em">' + esc(it.prompt || '') + '</textarea>';
       c.appendChild(div);
     });
   }
   function loadSchedules() {
-    fetch('/schedules_get').then(r => r.json())
+    // sfx 파일 목록을 먼저 받아 드롭다운을 채운 뒤 슬롯을 렌더.
+    fetch('/sfx_get').then(r => r.json()).then(d => { g_schedSfxFiles = (d.files || []).slice(); }).catch(() => { g_schedSfxFiles = []; })
+      .then(() => fetch('/schedules_get').then(r => r.json()))
       .then(d => renderSlots(d.items || []))
       .catch(e => setStatus($('schedStatus'), '로드 실패: ' + e, false));
   }
@@ -118,7 +134,7 @@
         hour: parseInt($('sh-' + idx).value, 10),
         min: parseInt($('sm-' + idx).value, 10),
         weekdayOnly: $('sw-' + idx).checked,
-        alarm: $('sa-' + idx).checked,
+        sound: $('ss-' + idx).value,
         prompt: $('sp-' + idx).value,
       });
     });
@@ -221,14 +237,6 @@
     postJson('/prox_set', obj)
       .then(o => setStatus($('proxStatus'), (o.ok ? '저장됨' : '실패: ' + o.t), o.ok))
       .catch(e => setStatus($('proxStatus'), '실패: ' + e, false));
-  });
-
-  // ---------- 카메라 비전 ----------
-  $('lookBtn').addEventListener('click', () => {
-    setStatus($('lookStatus'), '둘러보는 중... (몇 초 걸림)', true);
-    postText('/look', $('lookHint').value.trim())
-      .then(o => setStatus($('lookStatus'), (o.ok ? '봤어요! 곧 말합니다.' : '실패: ' + o.t), o.ok))
-      .catch(e => setStatus($('lookStatus'), '실패: ' + e, false));
   });
 
   // ---------- WiFi ----------
@@ -425,14 +433,56 @@
       .catch(e => setStatus($('nightStatus'), '실패: ' + e, false));
   });
 
+  // ---------- 눈 색 (감정별 그라데이션) ----------
+  const EYE_EMOTIONS = [['neutral', '중립'], ['happy', '기쁨'], ['sleepy', '졸림'], ['doubt', '갸웃'], ['sad', '슬픔'], ['angry', '화남']];
+  function eyeColorRender(data) {
+    const c = $('eyeColorList'); c.innerHTML = '';
+    EYE_EMOTIONS.forEach(([key, label]) => {
+      const d = data[key] || { top: '#FFFFFF', bot: '#FF8800' };
+      const div = document.createElement('div');
+      div.className = 'row';
+      div.style.cssText = 'gap:0.6em; margin-bottom:0.4em';
+      div.innerHTML =
+        '<span style="min-width:3em; font-weight:bold">' + label + '</span>' +
+        '<label style="font-weight:normal; margin:0">위 <input type="color" class="ec-top" data-k="' + key + '" value="' + esc(d.top) + '"></label>' +
+        '<label style="font-weight:normal; margin:0">아래 <input type="color" class="ec-bot" data-k="' + key + '" value="' + esc(d.bot) + '"></label>';
+      c.appendChild(div);
+    });
+  }
+  function loadEyeColor() {
+    fetch('/eyecolor_get').then(r => r.json())
+      .then(d => eyeColorRender(d))
+      .catch(e => setStatus($('eyeColorStatus'), '로드 실패: ' + e, false));
+  }
+  $('eyeColorSaveBtn').addEventListener('click', () => {
+    const obj = {};
+    EYE_EMOTIONS.forEach(([key]) => {
+      const top = document.querySelector('.ec-top[data-k="' + key + '"]').value;
+      const bot = document.querySelector('.ec-bot[data-k="' + key + '"]').value;
+      obj[key] = { top: top, bot: bot };
+    });
+    setStatus($('eyeColorStatus'), '저장 중...', true);
+    postJson('/eyecolor_set', obj)
+      .then(o => setStatus($('eyeColorStatus'), o.ok ? '저장됨 (즉시 적용)' : '실패: ' + o.t, o.ok))
+      .catch(e => setStatus($('eyeColorStatus'), '실패: ' + e, false));
+  });
+
   // ---------- 효과음 (SFX) ----------
   const SFX_EVENTS = [['', '(없음·음성전용)'], ['pet', '쓰담'], ['approach', '다가옴'], ['boot', '부팅'], ['alarm', '알람'],
     ['happy', '기쁨'], ['sad', '슬픔'], ['angry', '화남'], ['doubt', '의심'], ['sleepy', '졸림'], ['neutral', '중립'],
     ['sleep', '취침'], ['wake', '기상'], ['surprise', '깜짝'], ['charge', '충전'], ['low', '배터리부족']];
   let g_motionNames = [];   // /motions_get 에서 채움(사운드에 연동할 모션 선택지)
+  let g_sfxFiles = [];      // SD /sfx 폴더의 mp3 목록(파일 드롭다운용, /sfx_get 의 files)
   function motionOpts(sel) {
     return '<option value="">(모션 없음)</option>' +
       g_motionNames.map(m => '<option value="' + esc(m) + '"' + (m === (sel || '') ? ' selected' : '') + '>' + esc(m) + '</option>').join('');
+  }
+  function fileOpts(sel) {
+    let html = '<option value="">(파일 선택)</option>' +
+      g_sfxFiles.map(f => '<option value="' + esc(f) + '"' + (f === (sel || '') ? ' selected' : '') + '>' + esc(f) + '</option>').join('');
+    // 저장된 파일이 현재 SD 목록에 없으면(삭제 등) 그 값도 보존해서 표시.
+    if (sel && g_sfxFiles.indexOf(sel) < 0) html += '<option value="' + esc(sel) + '" selected>' + esc(sel) + ' (없음?)</option>';
+    return html;
   }
   function sfxAddRow(name, file, event, motion) {
     const div = document.createElement('div');
@@ -441,7 +491,7 @@
     const opts = SFX_EVENTS.map(e => '<option value="' + e[0] + '"' + (e[0] === (event || '') ? ' selected' : '') + '>' + e[1] + '</option>').join('');
     div.innerHTML =
       '<input type="text" class="sName" placeholder="이름(예: 생일축하)" style="flex:1;min-width:90px" value="' + esc(name || '') + '">' +
-      '<input type="text" class="sFile" placeholder="파일.mp3" style="flex:1;min-width:90px" value="' + esc(file || '') + '">' +
+      '<select class="sFile" style="flex:1;min-width:90px">' + fileOpts(file) + '</select>' +
       '<select class="sEvent">' + opts + '</select>' +
       '<select class="sMotion" title="함께 재생할 머리 모션">' + motionOpts(motion) + '</select>' +
       '<button type="button" class="sTest secondary">▶</button>' +
@@ -460,6 +510,7 @@
       fetch('/sfx_get').then(r => r.json()),
     ]).then(([md, d]) => {
       g_motionNames = (md.motions || []).map(m => m.name);
+      g_sfxFiles = (d.files || []).slice();   // 파일 드롭다운 후보(행 추가 전에 채움)
       $('sfxEnabled').checked = !!d.enabled;
       $('sfxList').innerHTML = '';
       (d.sounds || []).forEach(s => sfxAddRow(s.name, s.file, s.event, s.motion));
@@ -626,5 +677,6 @@
   loadTouch();
   loadBatt();
   loadNight();
+  loadEyeColor();
   loadWifi();
 })();
